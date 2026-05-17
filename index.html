@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nova Alarm</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & Babel CDN -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Framer Motion CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/framer-motion@10.16.4/dist/framer-motion.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #FBFBFD;
+            color: #1D1D1F;
+            -webkit-font-smoothing: antialiased;
+            overflow-x: hidden;
+        }
+        input[type="time"]::-webkit-calendar-picker-indicator {
+            display: none;
+        }
+        .apple-switch {
+            appearance: none;
+            width: 48px;
+            height: 28px;
+            background: #E5E7EB;
+            border-radius: 999px;
+            position: relative;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .apple-switch:checked {
+            background: #34C759;
+        }
+        .apple-switch::before {
+            content: '';
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            background: white;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: all 0.3s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .apple-switch:checked::before {
+            transform: translateX(20px);
+        }
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #E5E7EB; border-radius: 10px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const Motion = window.Motion || window.FramerMotion || {};
+        const { motion, AnimatePresence } = Motion;
+
+        // --- Database Helper (IndexedDB) ---
+        const DB_NAME = 'NovaAlarmDB';
+        const STORE_NAME = 'media';
+        
+        const getDB = () => new Promise((resolve, reject) => {
+            const request = indexedDB.open(DB_NAME, 1);
+            request.onupgradeneeded = (e) => e.target.result.createObjectStore(STORE_NAME);
+            request.onsuccess = (e) => resolve(e.target.result);
+            request.onerror = (e) => reject(e.target.error);
+        });
+
+        const saveMedia = async (id, blob) => {
+            const db = await getDB();
+            return new Promise((resolve) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                tx.objectStore(STORE_NAME).put(blob, id);
+                tx.oncomplete = () => resolve();
+            });
+        };
+
+        const getMedia = async (id) => {
+            const db = await getDB();
+            return new Promise((resolve) => {
+                const tx = db.transaction(STORE_NAME, 'readonly');
+                const req = tx.objectStore(STORE_NAME).get(id);
+                req.onsuccess = () => resolve(req.result);
+            });
+        };
+
+        const deleteMedia = async (id) => {
+            const db = await getDB();
+            const tx = db.transaction(STORE_NAME, 'readwrite');
+            tx.objectStore(STORE_NAME).delete(id);
+        };
+
+        // --- Main App ---
+        function App() {
+            const [alarms, setAlarms] = useState(() => {
+                const saved = localStorage.getItem('nova_alarms_v2');
+                return saved ? JSON.parse(saved) : [];
+            });
+            const [videoUrls, setVideoUrls] = useState({});
+            const [globalBgUrl, setGlobalBgUrl] = useState(null);
+            const [isModalOpen, setIsModalOpen] = useState(false);
+            const [ringingAlarm, setRingingAlarm] = useState(null);
+            const [dismissedAlarms, setDismissedAlarms] = useState({});
+
+            useEffect(() => {
+                const loadMedia = async () => {
+                    const urls = {};
+                    for (const alarm of alarms) {
+                        if (alarm.videoUrl === 'persistent') {
+                            const blob = await getMedia(alarm.id);
+                            if (blob) urls[alarm.id] = URL.createObjectURL(blob);
+                        }
+                    }
+                    setVideoUrls(urls);
+                    
+                    const bgBlob = await getMedia('global_bg');
+                    if (bgBlob) setGlobalBgUrl(URL.createObjectURL(bgBlob));
+                };
+                loadMedia();
+            }, []);
+
+            useEffect(() => {
+                localStorage.setItem('nova_alarms_v2', JSON.stringify(alarms));
+            }, [alarms]);
+
+            useEffect(() => {
+                const timer = setInterval(() => {
+                    const now = new Date();
+                    const hhmm = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
+                    const day = now.getDay();
+
+                    alarms.forEach(alarm => {
+                        const isDismissed = dismissedAlarms[alarm.id] === hhmm;
+                        if (alarm.isActive && alarm.time === hhmm && alarm.days.includes(day) && !isDismissed) {
+                            if (!ringingAlarm || ringingAlarm.id !== alarm.id) {
+                                setRingingAlarm({ ...alarm, activeUrl: videoUrls[alarm.id] });
+                            }
+                        }
+                    });
+                }, 1000);
+                return () => clearInterval(timer);
+            }, [alarms, ringingAlarm, videoUrls, dismissedAlarms]);
+
+            const handleToggle = (id) => {
+                setAlarms(prev => prev.map(a => a.id === id ? { ...a, isActive: !a.isActive } : a));
+            };
+
+            const handleDelete = async (id) => {
+                setAlarms(prev => prev.filter(a => a.id !== id));
+                await deleteMedia(id);
+            };
+
+            const handleBgUpload = async (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    await saveMedia('global_bg', file);
+                    if (globalBgUrl) URL.revokeObjectURL(globalBgUrl);
+                    setGlobalBgUrl(URL.createObjectURL(file));
+                }
+            };
+
+            return (
+                <div className="min-h-screen flex flex-col items-center pt-32 px-6 pb-20">
+                    <div className="w-full max-w-sm">
+                        <header className="flex items-center justify-between mb-12 px-2">
+                            <h1 className="text-4xl font-bold tracking-tight">Alarmlar</h1>
+                            <div className="flex items-center gap-3">
+                                <label className="w-10 h-10 bg-white border border-gray-100 rounded-full flex items-center justify-center cursor-pointer shadow-sm hover:bg-gray-50 transition-colors">
+                                    <i data-lucide="image" class="w-5 h-5 text-gray-400"></i>
+                                    <input type="file" accept="image/*" onChange={handleBgUpload} className="hidden" />
+                                </label>
+                                <button 
+                                    onClick={() => setIsModalOpen(true)}
+                                    className="w-10 h-10 bg-[#007AFF] text-white rounded-full flex items-center justify-center shadow-lg active:scale-95 transition-all"
+                                >
+                                    <i data-lucide="plus" class="w-6 h-6"></i>
+                                </button>
+                            </div>
+                        </header>
+
+                        <div className="space-y-3">
+                            <AnimatePresence mode="popLayout">
+                                {alarms.length === 0 ? (
+                                    <motion.div key="empty" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="py-20 text-center bg-white rounded-[2.5rem] border border-gray-50 shadow-sm">
+                                        <i data-lucide="bell" class="w-10 h-10 mx-auto mb-4 text-gray-200"></i>
+                                        <p className="text-gray-400 text-sm font-medium">Alarm kurulu değil</p>
+                                    </motion.div>
+                                ) : (
+                                    alarms.sort((a,b) => a.time.localeCompare(b.time)).map(alarm => (
+                                        <AlarmItem 
+                                            key={alarm.id} 
+                                            alarm={alarm} 
+                                            hasVideo={!!videoUrls[alarm.id]}
+                                            onToggle={() => handleToggle(alarm.id)} 
+                                            onDelete={() => handleDelete(alarm.id)} 
+                                        />
+                                    ))
+                                )}
+                            </AnimatePresence>
+                        </div>
+                    </div>
+
+                    <AnimatePresence>
+                        {isModalOpen && (
+                            <Modal 
+                                onClose={() => setIsModalOpen(false)} 
+                                onSave={async (alarm, blob) => {
+                                    if (blob) {
+                                        await saveMedia(alarm.id, blob);
+                                        const url = URL.createObjectURL(blob);
+                                        setVideoUrls(prev => ({ ...prev, [alarm.id]: url }));
+                                        alarm.videoUrl = 'persistent';
+                                    }
+                                    setAlarms(prev => [...prev, alarm]);
+                                    setIsModalOpen(false);
+                                }} 
+                            />
+                        )}
+                    </AnimatePresence>
+
+                    <AnimatePresence>
+                        {ringingAlarm && (
+                            <Ringer 
+                                alarm={ringingAlarm} 
+                                bgUrl={globalBgUrl}
+                                onDismiss={() => {
+                                    const time = ringingAlarm.time;
+                                    setDismissedAlarms(prev => ({ ...prev, [ringingAlarm.id]: time }));
+                                    setRingingAlarm(null);
+                                }} 
+                            />
+                        )}
+                    </AnimatePresence>
+                </div>
+            );
+        }
+
+        function AlarmItem({ alarm, hasVideo, onToggle, onDelete }) {
+            const days = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
+            const daysText = alarm.days.length === 7 ? 'Her gün' : alarm.days.length === 0 ? 'Bugün' : alarm.days.map(d => days[d]).join(', ');
+
+            useEffect(() => { lucide.createIcons(); }, []);
+
+            return (
+                <motion.div layout initial={{opacity:0, y:10}} animate={{opacity:1, y:0}} exit={{opacity:0, scale:0.95}} 
+                    className={`p-6 rounded-[1.8rem] border transition-all duration-300 ${alarm.isActive ? 'bg-white border-gray-100 shadow-sm' : 'bg-gray-50/50 border-transparent opacity-50'}`}>
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <div className="flex items-center gap-3">
+                                <h3 className={`text-4xl font-medium tracking-tight ${alarm.isActive ? 'text-black' : 'text-gray-400'}`}>{alarm.time}</h3>
+                                {hasVideo && alarm.isActive && <div className="w-1.5 h-1.5 bg-blue-500 rounded-full" />}
+                            </div>
+                            <p className="text-[12px] font-semibold text-gray-400 uppercase tracking-wide mt-1">{alarm.label || 'Alarm'}, {daysText}</p>
+                        </div>
+                        <div className="flex items-center gap-4">
+                            <input type="checkbox" checked={alarm.isActive} onChange={onToggle} className="apple-switch" />
+                            <button onClick={onDelete} className="p-2 text-gray-300 hover:text-red-500 transition-colors">
+                                <i data-lucide="x" class="w-5 h-5"></i>
+                            </button>
+                        </div>
+                    </div>
+                </motion.div>
+            );
+        }
+
+        function Modal({ onClose, onSave }) {
+            const [time, setTime] = useState('08:00');
+            const [label, setLabel] = useState('');
+            const [days, setDays] = useState([0,1,2,3,4,5,6]);
+            const [videoFile, setVideoFile] = useState(null);
+
+            useEffect(() => { lucide.createIcons(); }, []);
+
+            const dayNames = ['P', 'P', 'S', 'Ç', 'P', 'C', 'C'];
+
+            return (
+                <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/10 backdrop-blur-sm p-0 md:p-4">
+                    <motion.div initial={{y:'100%'}} animate={{y:0}} exit={{y:'100%'}} transition={{type:'spring', damping:25}} className="w-full max-w-md bg-white rounded-t-[2.5rem] md:rounded-[2.5rem] shadow-2xl p-8 space-y-8">
+                        <div className="flex items-center justify-between border-b border-gray-50 pb-6">
+                            <button onClick={onClose} className="text-[#007AFF] font-medium text-lg">İptal</button>
+                            <h2 className="text-lg font-bold">Alarm Ekle</h2>
+                            <button onClick={() => {
+                                onSave({ id: Math.random().toString(36).substr(2,9), time, label, days, isActive: true, videoUrl: videoFile ? 'persistent' : undefined, mediaType: videoFile ? (videoFile.type.startsWith('audio/') ? 'audio' : 'video') : undefined, fileName: videoFile?.name }, videoFile);
+                            }} className="text-[#007AFF] font-bold text-lg">Kaydet</button>
+                        </div>
+                        <div className="flex justify-center">
+                            <input type="time" value={time} onChange={e => setTime(e.target.value)} className="text-7xl font-light tracking-tight bg-transparent border-none focus:ring-0 text-black text-center cursor-pointer" />
+                        </div>
+                        <div className="space-y-6">
+                            <div className="flex items-center justify-between bg-gray-50 rounded-2xl p-4">
+                                <span className="font-medium">Etiket</span>
+                                <input type="text" placeholder="Alarm" value={label} onChange={e => setLabel(e.target.value)} className="bg-transparent text-right focus:ring-0 text-gray-500 font-medium" />
+                            </div>
+                            <div className="flex justify-between gap-1">
+                                {dayNames.map((n, i) => (
+                                    <button key={i} onClick={() => setDays(d => d.includes(i) ? d.filter(x => x!==i) : [...d, i])} 
+                                        className={`w-10 h-10 text-xs font-black rounded-full transition-all ${days.includes(i) ? 'bg-black text-white' : 'bg-gray-100 text-gray-400'}`}>{n}</button>
+                                ))}
+                            </div>
+                            <div className="bg-gray-50 rounded-2xl p-4 flex items-center justify-between relative overflow-hidden">
+                                <div className="flex flex-col gap-0.5">
+                                    <span className="font-medium">Ses / Video Seç</span>
+                                    <span style={{fontSize:'11px'}} className="text-gray-400">MP3, MP4, WAV, M4A…</span>
+                                </div>
+                                <span className="text-sm text-gray-400 truncate max-w-[120px]">{videoFile ? videoFile.name : 'Yok'}</span>
+                                <input type="file" accept="video/*,audio/*,.mp3,.mp4,.wav,.m4a,.ogg,.aac,.flac" onChange={e => setVideoFile(e.target.files[0])} className="absolute inset-0 opacity-0 cursor-pointer" />
+                            </div>
+                        </div>
+                    </motion.div>
+                </motion.div>
+            );
+        }
+
+        function Ringer({ alarm, onDismiss, bgUrl }) {
+            const vRef = useRef();
+            const aRef = useRef();
+
+            const isAudio = alarm.mediaType === 'audio';
+            const isVideo = !isAudio && !!alarm.activeUrl;
+
+            useEffect(() => {
+                if (vRef.current) vRef.current.play().catch(() => {});
+                if (aRef.current) aRef.current.play().catch(() => {});
+            }, []);
+
+            return (
+                <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-between py-32 px-8 overflow-hidden">
+                    <div className="absolute inset-0">
+                        {bgUrl && <img src={bgUrl} className="w-full h-full object-cover" alt="" />}
+                        {isVideo ? (
+                            <video ref={vRef} src={alarm.activeUrl} loop playsInline autoPlay className={`w-full h-full object-cover ${bgUrl ? 'opacity-0' : 'opacity-100'}`} />
+                        ) : !bgUrl && <div className="w-full h-full bg-slate-900 animate-pulse" />}
+                    </div>
+                    
+                    <div className="relative z-10 text-center">
+                        <h2 className="text-8xl font-light tracking-tighter text-white mb-4">{alarm.time}</h2>
+                        <p className="text-xl font-medium text-white/80 uppercase tracking-widest">{alarm.label || 'Günaydın'}</p>
+                    </div>
+
+                    <button onClick={onDismiss} className="relative z-10 w-full max-w-xs h-20 bg-white text-black text-2xl font-bold rounded-full shadow-2xl active:scale-95 transition-transform">Durdur</button>
+                    <audio ref={aRef} loop hidden autoPlay>
+                        {isAudio && alarm.activeUrl
+                            ? <source src={alarm.activeUrl} />
+                            : !isVideo && <source src="https://assets.mixkit.co/sfx/preview/mixkit-alarm-clock-beep-988.mp3" type="audio/mpeg" />
+                        }
+                    </audio>
+                </motion.div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+
+        // Refresh icons after render
+        setTimeout(() => lucide.createIcons(), 500);
+    </script>
+</body>
+</html>

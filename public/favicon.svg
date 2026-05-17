@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#0f0f1a"/>
+    </linearGradient>
+    <linearGradient id="letter" x1="16" y1="16" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#60a5fa"/>
+      <stop offset="100%" stop-color="#007AFF"/>
+    </linearGradient>
+  </defs>
+  <!-- Background rounded square -->
+  <rect width="64" height="64" rx="16" fill="url(#bg)"/>
+  <!-- Subtle inner glow -->
+  <rect width="64" height="64" rx="16" fill="url(#letter)" opacity="0.04"/>
+  <!-- N letter — clean geometric strokes -->
+  <path
+    d="M17 46 L17 18 L21.5 18 L43 40 L43 18 L47 18 L47 46 L42.5 46 L21 24 L21 46 Z"
+    fill="url(#letter)"
+  />
+</svg>
